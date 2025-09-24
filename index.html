@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pixel Art Converter</title>
+<title>Pixel Art Converter Enhanced</title>
 <style>
   body { font-family: sans-serif; padding: 20px; background: #f8f9fa; }
   #color-palette { margin-bottom: 10px; }
@@ -13,7 +13,7 @@
 </head>
 <body>
 
-<h1>Pixel Art Converter</h1>
+<h1>Pixel Art Converter Enhanced</h1>
 
 <label>Upload image: <input type="file" id="upload" accept="image/*"></label><br><br>
 <label>Grid width (cells): <input type="number" id="gridWidth" value="16"></label><br>
@@ -51,9 +51,11 @@ const ctxOriginal = originalCanvas.getContext('2d');
 const ctxPixel = pixelCanvas.getContext('2d');
 let image = null;
 
-// Default one color input
-addColorInput();
+// Bloques y pesos HSL ajustables
+const blockW = 20, blockH = 20;
+const Hweight = 3, Sweight = 1.5, Lweight = 1;
 
+addColorInput();
 addColorBtn.addEventListener('click', addColorInput);
 
 function addColorInput() {
@@ -65,151 +67,156 @@ function addColorInput() {
 
 upload.addEventListener('change', e => {
   const file = e.target.files[0];
-  if (!file) return;
+  if(!file) return;
   const img = new Image();
   img.onload = () => {
     image = img;
     originalCanvas.width = img.width;
     originalCanvas.height = img.height;
-    ctxOriginal.drawImage(img, 0, 0);
+    ctxOriginal.drawImage(img,0,0);
   };
   img.src = URL.createObjectURL(file);
 });
 
+// =====================
+// RGB → HSL
+// =====================
+function rgb2hsl([r,g,b]){
+  r/=255; g/=255; b/=255;
+  const max = Math.max(r,g,b), min = Math.min(r,g,b);
+  let h=0, s=0, l=(max+min)/2;
+  if(max!==min){
+    const d = max-min;
+    s = l>0.5? d/(2-max-min) : d/(max+min);
+    switch(max){
+      case r: h=(g-b)/d + (g<b?6:0); break;
+      case g: h=(b-r)/d +2; break;
+      case b: h=(r-g)/d +4; break;
+    }
+    h/=6;
+  }
+  return [h,s,l];
+}
+
+// =====================
+// Color promedio de región
+// =====================
+function averageColor(imgData, xStart, yStart, cellW, cellH, width){
+  let rSum=0,gSum=0,bSum=0, count=0;
+  for(let y=0;y<cellH;y++){
+    for(let x=0;x<cellW;x++){
+      const px = xStart + x;
+      const py = yStart + y;
+      if(px>=width) continue;
+      const i = (py*width + px)*4;
+      rSum += imgData[i];
+      gSum += imgData[i+1];
+      bSum += imgData[i+2];
+      count++;
+    }
+  }
+  return [rSum/count, gSum/count, bSum/count].map(v=>Math.round(v));
+}
+
+// =====================
+// Closest color HSL ponderado
+// =====================
+function closestColorHSLWeighted(pixelRGB, paletteRGB){
+  const pHSL = rgb2hsl(pixelRGB);
+  let minDist = Infinity, closest = paletteRGB[0];
+  for(const c of paletteRGB){
+    const cHSL = rgb2hsl(c);
+    const dist = Math.sqrt(
+      Math.pow((pHSL[0]-cHSL[0])*Hweight,2) +
+      Math.pow((pHSL[1]-cHSL[1])*Sweight,2) +
+      Math.pow((pHSL[2]-cHSL[2])*Lweight,2)
+    );
+    if(dist<minDist){ minDist=dist; closest=c; }
+  }
+  return closest;
+}
+
+// =====================
+// Procesar imagen
+// =====================
 processBtn.addEventListener('click', () => {
-  if (!image) return alert('Upload an image first.');
+  if(!image) return alert('Upload an image first.');
   const gridW = parseInt(gridWidthInput.value);
   const gridH = parseInt(gridHeightInput.value);
-  const colors = Array.from(colorsDiv.querySelectorAll('input')).map(c => hexToRgb(c.value));
-  processImage(gridW, gridH, colors);
-});
+  const paletteRGB = Array.from(colorsDiv.querySelectorAll('input')).map(c=>hexToRgb(c.value));
 
-function processImage(gridW, gridH, palette) {
-  // Downscale the image to the grid resolution
+  // Canvas temporal para resize
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = gridW;
   tempCanvas.height = gridH;
   const tempCtx = tempCanvas.getContext('2d');
-  tempCtx.drawImage(image, 0, 0, gridW, gridH);
-  const imgData = tempCtx.getImageData(0, 0, gridW, gridH).data;
+  tempCtx.drawImage(image,0,0,gridW,gridH);
+  const imgData = tempCtx.getImageData(0,0,gridW,gridH).data;
 
-  // Size of each block in the big canvas
-  const blockW = 20; // width of each block drawn
-  const blockH = 20; // height of each block drawn
-  const offsetLeft = 30; // space for Y axis numbers
-  const offsetTop = 30;  // space for X axis numbers
-  const totalWidth = offsetLeft + gridW * blockW;
-  const totalHeight = offsetTop + gridH * blockH;
+  const offsetLeft = 30, offsetTop = 30;
+  pixelCanvas.width = offsetLeft + gridW*blockW;
+  pixelCanvas.height = offsetTop + gridH*blockH;
+  ctxPixel.fillStyle = '#fff';
+  ctxPixel.fillRect(0,0,pixelCanvas.width,pixelCanvas.height);
 
-  pixelCanvas.width = totalWidth;
-  pixelCanvas.height = totalHeight;
+  // Procesar cada celda
+  const origCanvas = document.createElement('canvas');
+  origCanvas.width = image.width; origCanvas.height = image.height;
+  const origCtx = origCanvas.getContext('2d');
+  origCtx.drawImage(image,0,0);
+  const origData = origCtx.getImageData(0,0,image.width,image.height).data;
+  const cellWorig = Math.floor(image.width/gridW);
+  const cellHorig = Math.floor(image.height/gridH);
 
-  ctxPixel.fillStyle = '#ffffff';
-  ctxPixel.fillRect(0, 0, totalWidth, totalHeight);
-
-  // Draw pixelated blocks
-  for (let y = 0; y < gridH; y++) {
-    for (let x = 0; x < gridW; x++) {
-      const i = (y * gridW + x) * 4;
-      const r = imgData[i], g = imgData[i+1], b = imgData[i+2];
-      const closest = closestColor([r,g,b], palette);
+  for(let y=0;y<gridH;y++){
+    for(let x=0;x<gridW;x++){
+      const avg = averageColor(origData,x*cellWorig,y*cellHorig,cellWorig,cellHorig,image.width);
+      const closest = closestColorHSLWeighted(avg,paletteRGB);
       ctxPixel.fillStyle = `rgb(${closest[0]},${closest[1]},${closest[2]})`;
       ctxPixel.fillRect(offsetLeft + x*blockW, offsetTop + y*blockH, blockW, blockH);
     }
   }
 
-  // Draw grid lines
+  // Dibujar grid
   ctxPixel.strokeStyle = '#999';
   ctxPixel.lineWidth = 0.5;
-
-  // Vertical lines
-  for (let x = 0; x <= gridW; x++) {
-    const xPos = offsetLeft + x * blockW;
+  for(let x=0;x<=gridW;x++){
+    const xPos = offsetLeft + x*blockW;
     ctxPixel.beginPath();
     ctxPixel.moveTo(xPos, offsetTop);
-    ctxPixel.lineTo(xPos, offsetTop + gridH * blockH);
+    ctxPixel.lineTo(xPos, offsetTop + gridH*blockH);
     ctxPixel.stroke();
   }
-
-  // Horizontal lines
-  for (let y = 0; y <= gridH; y++) {
-    const yPos = offsetTop + y * blockH;
+  for(let y=0;y<=gridH;y++){
+    const yPos = offsetTop + y*blockH;
     ctxPixel.beginPath();
     ctxPixel.moveTo(offsetLeft, yPos);
-    ctxPixel.lineTo(offsetLeft + gridW * blockW, yPos);
+    ctxPixel.lineTo(offsetLeft + gridW*blockW, yPos);
     ctxPixel.stroke();
   }
 
-  // Draw axis numbers
+  // Dibujar ejes
   ctxPixel.fillStyle = '#000';
   ctxPixel.font = '12px sans-serif';
   ctxPixel.textAlign = 'center';
   ctxPixel.textBaseline = 'middle';
-
-  // X numbers on top
-  for (let x = 0; x < gridW; x++) {
-    const xPos = offsetLeft + x * blockW + blockW / 2;
-    ctxPixel.fillText(x, xPos, offsetTop / 2); // top axis
+  for(let x=0;x<gridW;x++){
+    ctxPixel.fillText(x, offsetLeft + x*blockW + blockW/2, offsetTop/2);
   }
-
-  // Y numbers on left
   ctxPixel.textAlign = 'right';
-  for (let y = 0; y < gridH; y++) {
-    const yPos = offsetTop + y * blockH + blockH / 2;
-    ctxPixel.fillText(y, offsetLeft - 5, yPos); // left axis
+  for(let y=0;y<gridH;y++){
+    ctxPixel.fillText(y, offsetLeft-5, offsetTop + y*blockH + blockH/2);
   }
+});
+
+// =====================
+// Helper: hex → RGB
+// =====================
+function hexToRgb(hex){
+  const bigint = parseInt(hex.slice(1),16);
+  return [(bigint>>16)&255,(bigint>>8)&255, bigint&255];
 }
-
-function hexToRgb(hex) {
-  const bigint = parseInt(hex.slice(1), 16);
-  return [(bigint>>16)&255,(bigint>>8)&255,bigint&255];
-}
-
-function closestColor(rgbColor, palette) {
-  // Convert RGB [0-255] to Lab
-  function rgb2lab([r, g, b]) {
-    // Convert to [0,1]
-    r /= 255; g /= 255; b /= 255;
-
-    // sRGB to XYZ
-    r = r > 0.04045 ? Math.pow((r + 0.055)/1.055, 2.4) : r/12.92;
-    g = g > 0.04045 ? Math.pow((g + 0.055)/1.055, 2.4) : g/12.92;
-    b = b > 0.04045 ? Math.pow((b + 0.055)/1.055, 2.4) : b/12.92;
-
-    let x = (r*0.4124 + g*0.3576 + b*0.1805)/0.95047;
-    let y = (r*0.2126 + g*0.7152 + b*0.0722)/1.00000;
-    let z = (r*0.0193 + g*0.1192 + b*0.9505)/1.08883;
-
-    [x,y,z] = [x,y,z].map(v => v > 0.008856 ? Math.cbrt(v) : (7.787*v)+16/116);
-
-    const L = 116*y - 16;
-    const a = 500*(x - y);
-    const b_ = 200*(y - z);
-    return [L, a, b_];
-  }
-
-  const labColor = rgb2lab(rgbColor);
-  let minDist = Infinity;
-  let closest = palette[0];
-
-  for (const c of palette) {
-    const labC = rgb2lab(c);
-    const dist = Math.sqrt(
-      Math.pow(labColor[0]-labC[0],2) +
-      Math.pow(labColor[1]-labC[1],2) +
-      Math.pow(labColor[2]-labC[2],2)
-    );
-    if (dist < minDist) {
-      minDist = dist;
-      closest = c;
-    }
-  }
-
-  return closest;
-}
-
 
 </script>
-
 </body>
 </html>
