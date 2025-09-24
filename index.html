@@ -165,21 +165,49 @@ function hexToRgb(hex) {
   return [(bigint>>16)&255,(bigint>>8)&255,bigint&255];
 }
 
-function closestColor(color, palette) {
+function closestColor(rgbColor, palette) {
+  // Convert RGB [0-255] to Lab
+  function rgb2lab([r, g, b]) {
+    // Convert to [0,1]
+    r /= 255; g /= 255; b /= 255;
+
+    // sRGB to XYZ
+    r = r > 0.04045 ? Math.pow((r + 0.055)/1.055, 2.4) : r/12.92;
+    g = g > 0.04045 ? Math.pow((g + 0.055)/1.055, 2.4) : g/12.92;
+    b = b > 0.04045 ? Math.pow((b + 0.055)/1.055, 2.4) : b/12.92;
+
+    let x = (r*0.4124 + g*0.3576 + b*0.1805)/0.95047;
+    let y = (r*0.2126 + g*0.7152 + b*0.0722)/1.00000;
+    let z = (r*0.0193 + g*0.1192 + b*0.9505)/1.08883;
+
+    [x,y,z] = [x,y,z].map(v => v > 0.008856 ? Math.cbrt(v) : (7.787*v)+16/116);
+
+    const L = 116*y - 16;
+    const a = 500*(x - y);
+    const b_ = 200*(y - z);
+    return [L, a, b_];
+  }
+
+  const labColor = rgb2lab(rgbColor);
   let minDist = Infinity;
   let closest = palette[0];
-  for (const c of palette) {
 
-    const dist = Math.abs(c[0]-color[0]) +
-                 Math.abs(c[1]-color[1]) +
-                 Math.abs(c[2]-color[2]);
+  for (const c of palette) {
+    const labC = rgb2lab(c);
+    const dist = Math.sqrt(
+      Math.pow(labColor[0]-labC[0],2) +
+      Math.pow(labColor[1]-labC[1],2) +
+      Math.pow(labColor[2]-labC[2],2)
+    );
     if (dist < minDist) {
       minDist = dist;
       closest = c;
     }
   }
+
   return closest;
 }
+
 
 </script>
 
