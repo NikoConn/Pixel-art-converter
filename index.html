@@ -169,11 +169,18 @@ function closestColor(color, palette) {
   let minDist = Infinity;
   let closest = palette[0];
   for (const c of palette) {
-    const dist = (c[0]-color[0])**2+(c[1]-color[1])**2+(c[2]-color[2])**2;
-    if (dist<minDist) {minDist=dist; closest=c;}
+
+    const dist = Math.abs(c[0]-color[0]) +
+                 Math.abs(c[1]-color[1]) +
+                 Math.abs(c[2]-color[2]);
+    if (dist < minDist) {
+      minDist = dist;
+      closest = c;
+    }
   }
   return closest;
 }
+
 </script>
 
 </body>
