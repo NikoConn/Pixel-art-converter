@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pixel Art Converter</title>
+<style>
+  body { font-family: sans-serif; padding: 20px; background: #f8f9fa; }
+  #color-palette { margin-bottom: 10px; }
+  canvas { border: 1px solid #ccc; margin: 10px; background: #fff; }
+  .container { display: flex; flex-wrap: wrap; gap: 20px; }
+</style>
+</head>
+<body>
+
+<h1>Pixel Art Converter</h1>
+
+<label>Upload image: <input type="file" id="upload" accept="image/*"></label><br><br>
+<label>Grid width (cells): <input type="number" id="gridWidth" value="16"></label><br>
+<label>Grid height (cells): <input type="number" id="gridHeight" value="16"></label><br><br>
+
+<div id="color-palette">
+  <h3>Color palette:</h3>
+  <div id="colors"></div>
+  <button id="addColor">Add color</button>
+</div>
+
+<button id="process">Process Image</button>
+
+<div class="container">
+  <div>
+    <h3>Original</h3>
+    <canvas id="originalCanvas"></canvas>
+  </div>
+  <div>
+    <h3>Pixelated with Grid</h3>
+    <canvas id="pixelCanvas"></canvas>
+  </div>
+</div>
+
+<script>
+const upload = document.getElementById('upload');
+const gridWidthInput = document.getElementById('gridWidth');
+const gridHeightInput = document.getElementById('gridHeight');
+const addColorBtn = document.getElementById('addColor');
+const colorsDiv = document.getElementById('colors');
+const processBtn = document.getElementById('process');
+const originalCanvas = document.getElementById('originalCanvas');
+const pixelCanvas = document.getElementById('pixelCanvas');
+const ctxOriginal = originalCanvas.getContext('2d');
+const ctxPixel = pixelCanvas.getContext('2d');
+let image = null;
+
+// Default one color input
+addColorInput();
+
+addColorBtn.addEventListener('click', addColorInput);
+
+function addColorInput() {
+  const input = document.createElement('input');
+  input.type = 'color';
+  input.value = '#ff0000';
+  colorsDiv.appendChild(input);
+}
+
+upload.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const img = new Image();
+  img.onload = () => {
+    image = img;
+    originalCanvas.width = img.width;
+    originalCanvas.height = img.height;
+    ctxOriginal.drawImage(img, 0, 0);
+  };
+  img.src = URL.createObjectURL(file);
+});
+
+processBtn.addEventListener('click', () => {
+  if (!image) return alert('Upload an image first.');
+  const gridW = parseInt(gridWidthInput.value);
+  const gridH = parseInt(gridHeightInput.value);
+  const colors = Array.from(colorsDiv.querySelectorAll('input')).map(c => hexToRgb(c.value));
+  processImage(gridW, gridH, colors);
+});
+
+function processImage(gridW, gridH, palette) {
+  // Downscale the image to the grid resolution
+  const tempCanvas = document.createElement('canvas');
+  tempCanvas.width = gridW;
+  tempCanvas.height = gridH;
+  const tempCtx = tempCanvas.getContext('2d');
+  tempCtx.drawImage(image, 0, 0, gridW, gridH);
+  const imgData = tempCtx.getImageData(0, 0, gridW, gridH).data;
+
+  // Size of each block in the big canvas
+  const blockW = 20; // width of each block drawn
+  const blockH = 20; // height of each block drawn
+  const offsetLeft = 30; // space for Y axis numbers
+  const offsetTop = 30;  // space for X axis numbers
+  const totalWidth = offsetLeft + gridW * blockW;
+  const totalHeight = offsetTop + gridH * blockH;
+
+  pixelCanvas.width = totalWidth;
+  pixelCanvas.height = totalHeight;
+
+  ctxPixel.fillStyle = '#ffffff';
+  ctxPixel.fillRect(0, 0, totalWidth, totalHeight);
+
+  // Draw pixelated blocks
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      const i = (y * gridW + x) * 4;
+      const r = imgData[i], g = imgData[i+1], b = imgData[i+2];
+      const closest = closestColor([r,g,b], palette);
+      ctxPixel.fillStyle = `rgb(${closest[0]},${closest[1]},${closest[2]})`;
+      ctxPixel.fillRect(offsetLeft + x*blockW, offsetTop + y*blockH, blockW, blockH);
+    }
+  }
+
+  // Draw grid lines
+  ctxPixel.strokeStyle = '#999';
+  ctxPixel.lineWidth = 0.5;
+
+  // Vertical lines
+  for (let x = 0; x <= gridW; x++) {
+    const xPos = offsetLeft + x * blockW;
+    ctxPixel.beginPath();
+    ctxPixel.moveTo(xPos, offsetTop);
+    ctxPixel.lineTo(xPos, offsetTop + gridH * blockH);
+    ctxPixel.stroke();
+  }
+
+  // Horizontal lines
+  for (let y = 0; y <= gridH; y++) {
+    const yPos = offsetTop + y * blockH;
+    ctxPixel.beginPath();
+    ctxPixel.moveTo(offsetLeft, yPos);
+    ctxPixel.lineTo(offsetLeft + gridW * blockW, yPos);
+    ctxPixel.stroke();
+  }
+
+  // Draw axis numbers
+  ctxPixel.fillStyle = '#000';
+  ctxPixel.font = '12px sans-serif';
+  ctxPixel.textAlign = 'center';
+  ctxPixel.textBaseline = 'middle';
+
+  // X numbers on top
+  for (let x = 0; x < gridW; x++) {
+    const xPos = offsetLeft + x * blockW + blockW / 2;
+    ctxPixel.fillText(x, xPos, offsetTop / 2); // top axis
+  }
+
+  // Y numbers on left
+  ctxPixel.textAlign = 'right';
+  for (let y = 0; y < gridH; y++) {
+    const yPos = offsetTop + y * blockH + blockH / 2;
+    ctxPixel.fillText(y, offsetLeft - 5, yPos); // left axis
+  }
+}
+
+function hexToRgb(hex) {
+  const bigint = parseInt(hex.slice(1), 16);
+  return [(bigint>>16)&255,(bigint>>8)&255,bigint&255];
+}
+
+function closestColor(color, palette) {
+  let minDist = Infinity;
+  let closest = palette[0];
+  for (const c of palette) {
+    const dist = (c[0]-color[0])**2+(c[1]-color[1])**2+(c[2]-color[2])**2;
+    if (dist<minDist) {minDist=dist; closest=c;}
+  }
+  return closest;
+}
+</script>
+
+</body>
+</html>
